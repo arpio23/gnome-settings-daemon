@@ -2,6 +2,199 @@ env:
   global:
     BUILD_ON="amd64 arm64 armhf"
 
-import:
-  source: hybris-mobian-releng/build-snippets:debian-package.yml@master
+# Snippet for Debian package building
+# Copyright (C) 2020 Eugenio "g7" Paolantonio <me@medesimo.eu>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#    * Neither the name of the <organization> nor the
+#      names of its contributors may be used to endorse or promote products
+#      derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+# DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+os: linux
+dist: focal
+
+stages:
+  - build
+
+services:
+  - docker
+
+_debian_package_build_template: &debian_package_build_template
+  stage: build
+
+  before_install:
+   - docker pull ${DOCKER_IMAGE}
+   - sudo apt-get install --yes devscripts
+
+  script:
+   # Store build results in /tmp/buildd-results
+   - mkdir -p /tmp/buildd-results
+   - |
+     docker run \
+       -e CI \
+       -e TRAVIS \
+       -e HAS_JOSH_K_SEAL_OF_APPROVAL \
+       -e RELENG_FULL_BUILD \
+       -e TRAVIS_COMMIT \
+       -e TRAVIS_TAG \
+       -e TRAVIS_BRANCH \
+       -e TRAVIS_EVENT_TYPE \
+       -v /tmp/buildd-results:/buildd \
+       -v ${PWD}:/buildd/sources \
+       --security-opt seccomp:unconfined \
+       ${DOCKER_IMAGE} \
+       /bin/sh -c "cd /buildd/sources ; bash ./releng-build-package"
+
+  after_success:
+    - echo "Signing..."
+    - |
+      if [ -z "${GPG_STAGINGPRODUCTION_SIGNING_KEYID}" ]; then
+         echo -e "${GPG_FEATURE_SIGNING_KEY}" | gpg --import
+         _GPG_KEYID="${GPG_FEATURE_SIGNING_KEYID}"
+      else
+         echo -e "${GPG_STAGINGPRODUCTION_SIGNING_KEY}" | gpg --import
+         _GPG_KEYID="${GPG_STAGINGPRODUCTION_SIGNING_KEYID}"
+      fi
+    - cd /tmp/buildd-results
+    - debsign -k$_GPG_KEYID *.changes
+
+  # FIXME: This is not really elegant, but given that this snippet
+  # must be self-contained we can't ship the deployer on every
+  # repository.
+  # The solution would be to launch again the ${DOCKER_IMAGE},
+  # with a fresh environment, and use the deployer embedded there.
+  # Given that user-supplied code won't be executed this time (the
+  # old state is scrapped), passing the SSH credentials won't be
+  # a cause of concern (as long as we trust the Docker image, but
+  # if we don't there is definitely a bigger problem at hand.)
+  deploy:
+    provider: script
+    script:
+     - |
+       docker run \
+         -e CI \
+         -e TRAVIS \
+         -e HAS_JOSH_K_SEAL_OF_APPROVAL \
+         -e TRAVIS_COMMIT \
+         -e TRAVIS_TAG \
+         -e TRAVIS_BRANCH \
+         -e TRAVIS_EVENT_TYPE \
+         -e TRAVIS_REPO_SLUG \
+         -e INTAKE_SSH_KEY \
+         -e INTAKE_SSH_USER \
+         -v /tmp/buildd-results:/tmp/buildd-results \
+         --security-opt seccomp:unconfined \
+         ${DOCKER_IMAGE} \
+         /bin/sh -c "repo-hybris-mobian-deploy.sh"
+    edge: true
+    on:
+      all_branches: true
+
+_bullseye_amd64_full_env_filter: &bullseye_amd64_full_env_filter
+  if: env(BUILD_ON) =~ /^amd64 ?/ AND (branch =~ /^(feature\/)?bullseye(\/)?.*$/ OR (tag =~ /^hybris-mobian\/bullseye\/.*$/))
+
+_bullseye_amd64_dep_env_filter: &bullseye_amd64_dep_env_filter
+  if: env(BUILD_ON) =~ / amd64/ AND (branch =~ /^(feature\/)?bullseye(\/)?.*$/ OR (tag =~ /^hybris-mobian\/bullseye\/.*$/))
+
+_bullseye_arm64_full_env_filter: &bullseye_arm64_full_env_filter
+  if: env(BUILD_ON) =~ /^arm64 ?/ AND (branch =~ /^(feature\/)?bullseye(\/)?.*$/ OR (tag =~ /^hybris-mobian\/bullseye\/.*$/))
+
+_bullseye_arm64_dep_env_filter: &bullseye_arm64_dep_env_filter
+  if: env(BUILD_ON) =~ / arm64/ AND (branch =~ /^(feature\/)?bullseye(\/)?.*$/ OR (tag =~ /^hybris-mobian\/bullseye\/.*$/))
+
+_bullseye_armhf_full_env_filter: &bullseye_armhf_full_env_filter
+  if: env(BUILD_ON) =~ /^armhf ?/ AND (branch =~ /^(feature\/)?bullseye(\/)?.*$/ OR (tag =~ /^hybris-mobian\/bullseye\/.*$/))
+
+_bullseye_armhf_dep_env_filter: &bullseye_armhf_dep_env_filter
+  if: env(BUILD_ON) =~ / armhf/ AND (branch =~ /^(feature\/)?bullseye(\/)?.*$/ OR (tag =~ /^hybris-mobian\/bullseye\/.*$/))
+  
+########################################################################
+
+jobs:
+  include:
+
+  # Debian bullseye AMD64 (x86_64)
+  # - route for full builds (arch-dep, arch-indep and source)
+  - name: bullseye-amd64-full
+    arch: amd64
+    env:
+      - DOCKER_IMAGE="hybrismobian/build-essential:bullseye"
+      - RELENG_FULL_BUILD="yes"
+    <<: *bullseye_amd64_full_env_filter
+    <<: *debian_package_build_template
+
+  # Debian bullseye AMD64 (x86_64)
+  # - route for only arch-dep builds
+  - name: bullseye-amd64-dep
+    arch: amd64
+    env:
+      - DOCKER_IMAGE="hybrismobian/build-essential:bullseye"
+      - RELENG_FULL_BUILD="no"
+    <<: *bullseye_amd64_dep_env_filter
+    <<: *debian_package_build_template
+
+  # Debian bullseye ARM64 (AArch64)
+  # - route for full builds (arch-dep, arch-indep and source)
+  - name: bullseye-arm64-full
+    arch: arm64-graviton2
+    virt: vm # required to route the job to arm64-graviton2
+    group: edge # required to route the job to arm64-graviton2
+    env:
+      - DOCKER_IMAGE="hybrismobian/build-essential:bullseye"
+      - RELENG_FULL_BUILD="yes"
+    <<: *bullseye_arm64_full_env_filter
+    <<: *debian_package_build_template
+
+  # Debian bullseye ARM64 (AArch64)
+  # - route for only arch-dep builds
+  - name: bullseye-arm64-dep
+    arch: arm64-graviton2
+    virt: vm # required to route the job to arm64-graviton2
+    group: edge # required to route the job to arm64-graviton2
+    env:
+      - DOCKER_IMAGE="hybrismobian/build-essential:bullseye"
+      - RELENG_FULL_BUILD="no"
+    <<: *bullseye_arm64_dep_env_filter
+    <<: *debian_package_build_template
+
+  # Debian bullseye ARMHF (armv7hf)
+  # - route for full builds (arch-dep, arch-indep and source)
+  - name: bullseye-armhf-full
+    arch: arm64-graviton2
+    virt: vm # required to route the job to arm64-graviton2
+    group: edge # required to route the job to arm64-graviton2
+    env:
+      - DOCKER_IMAGE="hybrismobian/build-essential:bullseye-armhf"
+      - RELENG_FULL_BUILD="yes"
+    <<: *bullseye_armhf_full_env_filter
+    <<: *debian_package_build_template
+
+  # Debian bullseye ARMHF (armv7hf)
+  # - route for only arch-dep builds
+  - name: bullseye-armhf-dep
+    arch: arm64-graviton2
+    virt: vm # required to route the job to arm64-graviton2
+    group: edge # required to route the job to arm64-graviton2
+    env:
+      - DOCKER_IMAGE="hybrismobian/build-essential:bullseye-armhf"
+      - RELENG_FULL_BUILD="no"
+    <<: *bullseye_armhf_dep_env_filter
+    <<: *debian_package_build_template
