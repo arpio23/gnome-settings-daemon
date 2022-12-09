@@ -12,9 +12,9 @@
       <description>Set brightness in auto mode linear dependent on the ambient-0 to ambient-100 values</description>
     </key>
     <key name="auto-brightness-delay" type="i">
-      <default>2</default>
-      <summary>Delay brightness update in second</summary>
-      <description>Set brightness delay for brightness update in seconds. After this time the ambient light will be checked again before update.</description>
+      <default>5</default>
+      <summary>Delay brightness-less update in second</summary>
+      <description>Wait for amount of seconds and check ambient light again before turning down screen brightness.</description>
     </key>
     <key name="off-brightness-level" type="i">
       <default>0</default>
@@ -32,9 +32,9 @@
       <description>The brgihtness level always steps up dependent on the ambient light. But will only step down if the difference in percent is bigger then this value. This prevents jumping of the brightness on low ambient light changes.</description>
     </key>
     <key name="linear-brgihtness-points" type="aai">
-      <default>[[0, 0], [10, 100], [25, 400], [45, 700], [65, 1200], [85, 1600], [100, 2500]]</default>
+      <default>[[0, 0], [5, 5], [10, 30], [25, 200], [45, 500], [65, 1000], [85, 1500], [100, 2500]]</default>
       <summary>Array of points for brightness calculation</summary>
-      <description>First value is the brightness in %, second value is the ambient light value. With defasult settings [45, 700] ambient light at 700 and less will scale the brightness betweeen 25% and 45%</description>
+      <description>First value is the brightness in %, second value is the ambient light value. With defasult settings [45, 500] ambient light at 500 and less will scale the brightness betweeen 25% and 45%</description>
     </key>
   </schema>
 </schemalist>
